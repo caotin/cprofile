@@ -43,6 +43,9 @@ Public files:
 cprofile list
 cprofile current
 cprofile add <name>
+cprofile add <name> --wizard
+cprofile add <name> --option [label]
+cprofile add <name> --host <url> --model <model>
 cprofile use [--force] <name>
 cprofile login [--force] <name> [-- <claude auth login args...>]
 ```
@@ -65,6 +68,32 @@ Create a new profile:
 
 ```bash
 cprofile add work
+```
+
+Create a new profile and fill Claude settings from terminal input:
+
+```bash
+cprofile add local --option name
+```
+
+That prompts for:
+
+- host / base URL
+- auth token
+- default model
+- haiku model
+- sonnet model
+- opus model
+
+Create a new profile without prompts:
+
+```bash
+cprofile add local \
+  --host http://127.0.0.1:1234 \
+  --model gpt-5.4-mini \
+  --haiku-model gpt-5.4-mini \
+  --sonnet-model gpt-5.4-mini \
+  --opus-model gpt-5.4
 ```
 
 Switch Claude to that profile:
@@ -105,6 +134,18 @@ cprofile use myprofile
 ```
 
 That creates a new profile, copies the default settings, opens the file in TextEdit, and activates the profile.
+
+You can also generate the settings file directly during profile creation:
+
+```bash
+cprofile add myprofile --wizard
+```
+
+or:
+
+```bash
+cprofile add myprofile --option setup
+```
 
 ## Manual `settings.json` Editing
 

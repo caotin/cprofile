@@ -14,14 +14,14 @@ usage() {
 Usage:
   ${SELF_NAME} list
   ${SELF_NAME} current
-  ${SELF_NAME} add <name>
+  ${SELF_NAME} add <name> [--wizard|--option [label]] [--host <url>] [--auth-token <token>] [--model <model>] [--haiku-model <model>] [--sonnet-model <model>] [--opus-model <model>]
   ${SELF_NAME} use [--force] <name>
   ${SELF_NAME} login [--force] <name> [-- <claude auth login args...>]
 
 Commands:
   list       List saved Claude profiles.
   current    Print the active Claude profile name.
-  add        Create an empty Claude profile directory.
+  add        Create a profile directory, optionally prompting for Claude settings.
   use        Switch plain 'claude' to the selected profile.
   login      Switch to a profile and run 'claude auth login'.
 
@@ -50,6 +50,81 @@ validate_name() {
 
 profile_path() {
   printf '%s/%s' "${PROFILE_ROOT}" "$1"
+}
+
+json_escape() {
+  local value="${1-}"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  printf '%s' "${value}"
+}
+
+prompt_value() {
+  local prompt="$1"
+  local default="${2-}"
+  local input=""
+
+  if [[ -n "${default}" ]]; then
+    read -r -p "${prompt} [${default}]: " input || true
+    printf '%s' "${input:-${default}}"
+    return 0
+  fi
+
+  read -r -p "${prompt}: " input || true
+  printf '%s' "${input}"
+}
+
+seed_statusline_script() {
+  local path="$1"
+  local source_file target_file
+  source_file="$(profile_path "${DEFAULT_PROFILE}")/statusline-command.sh"
+  target_file="${path}/statusline-command.sh"
+
+  if [[ -f "${source_file}" && ! -e "${target_file}" ]]; then
+    cp "${source_file}" "${target_file}"
+  fi
+}
+
+write_settings_json() {
+  local path="$1"
+  local auth_token="$2"
+  local host="$3"
+  local model="$4"
+  local haiku_model="$5"
+  local sonnet_model="$6"
+  local opus_model="$7"
+  local file="${path}/settings.json"
+  local -a env_lines=()
+  local i last_index
+
+  [[ -n "${auth_token}" ]] && env_lines+=("\"ANTHROPIC_AUTH_TOKEN\": \"$(json_escape "${auth_token}")\"")
+  [[ -n "${host}" ]] && env_lines+=("\"ANTHROPIC_BASE_URL\": \"$(json_escape "${host}")\"")
+  [[ -n "${haiku_model}" ]] && env_lines+=("\"ANTHROPIC_DEFAULT_HAIKU_MODEL\": \"$(json_escape "${haiku_model}")\"")
+  [[ -n "${opus_model}" ]] && env_lines+=("\"ANTHROPIC_DEFAULT_OPUS_MODEL\": \"$(json_escape "${opus_model}")\"")
+  [[ -n "${sonnet_model}" ]] && env_lines+=("\"ANTHROPIC_DEFAULT_SONNET_MODEL\": \"$(json_escape "${sonnet_model}")\"")
+  [[ -n "${model}" ]] && env_lines+=("\"ANTHROPIC_MODEL\": \"$(json_escape "${model}")\"")
+
+  {
+    printf '{\n'
+    printf '  "env": {\n'
+    if [[ ${#env_lines[@]} -gt 0 ]]; then
+      last_index=$((${#env_lines[@]} - 1))
+      for i in "${!env_lines[@]}"; do
+        if [[ "${i}" -lt "${last_index}" ]]; then
+          printf '    %s,\n' "${env_lines[$i]}"
+        else
+          printf '    %s\n' "${env_lines[$i]}"
+        fi
+      done
+    fi
+    printf '  },\n'
+    printf '  "statusLine": {\n'
+    printf '    "type": "command",\n'
+    printf '    "command": "bash ~/.claude/statusline-command.sh"\n'
+    printf '  }\n'
+    printf '}\n'
+  } > "${file}"
 }
 
 write_active() {
@@ -217,8 +292,72 @@ cmd_current() {
 }
 
 cmd_add() {
-  local name="${1:-}"
-  [[ $# -eq 1 && -n "${name}" ]] || die "usage: ${SELF_NAME} add <name>"
+  local name=""
+  local wizard=0
+  local option_label=""
+  local host=""
+  local auth_token=""
+  local model=""
+  local haiku_model=""
+  local sonnet_model=""
+  local opus_model=""
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --wizard|--interactive)
+        wizard=1
+        shift
+        ;;
+      --option)
+        wizard=1
+        shift
+        if [[ $# -gt 0 && "$1" != --* ]]; then
+          option_label="$1"
+          shift
+        fi
+        ;;
+      --host)
+        [[ $# -ge 2 ]] || die "usage: ${SELF_NAME} add <name> --host <url>"
+        host="$2"
+        shift 2
+        ;;
+      --auth-token)
+        [[ $# -ge 2 ]] || die "usage: ${SELF_NAME} add <name> --auth-token <token>"
+        auth_token="$2"
+        shift 2
+        ;;
+      --model)
+        [[ $# -ge 2 ]] || die "usage: ${SELF_NAME} add <name> --model <model>"
+        model="$2"
+        shift 2
+        ;;
+      --haiku-model)
+        [[ $# -ge 2 ]] || die "usage: ${SELF_NAME} add <name> --haiku-model <model>"
+        haiku_model="$2"
+        shift 2
+        ;;
+      --sonnet-model)
+        [[ $# -ge 2 ]] || die "usage: ${SELF_NAME} add <name> --sonnet-model <model>"
+        sonnet_model="$2"
+        shift 2
+        ;;
+      --opus-model)
+        [[ $# -ge 2 ]] || die "usage: ${SELF_NAME} add <name> --opus-model <model>"
+        opus_model="$2"
+        shift 2
+        ;;
+      *)
+        if [[ -z "${name}" ]]; then
+          name="$1"
+          shift
+        else
+          die "usage: ${SELF_NAME} add <name> [--wizard|--option [label]] [--host <url>] [--auth-token <token>] [--model <model>] [--haiku-model <model>] [--sonnet-model <model>] [--opus-model <model>]"
+        fi
+        ;;
+    esac
+  done
+
+  [[ -n "${name}" ]] || die "usage: ${SELF_NAME} add <name> [--wizard|--option [label]] [--host <url>] [--auth-token <token>] [--model <model>] [--haiku-model <model>] [--sonnet-model <model>] [--opus-model <model>]"
   bootstrap_if_needed
   validate_name "${name}"
 
@@ -226,6 +365,22 @@ cmd_add() {
   path="$(profile_path "${name}")"
   [[ ! -e "${path}" ]] || die "profile '${name}' already exists"
   mkdir -p "${path}"
+
+  if [[ "${wizard}" == "1" ]]; then
+    [[ -n "${option_label}" ]] && note "config option: ${option_label}"
+    host="$(prompt_value "Host / base URL" "${host}")"
+    auth_token="$(prompt_value "Auth token (optional)" "${auth_token}")"
+    model="$(prompt_value "Default model" "${model}")"
+    haiku_model="$(prompt_value "Haiku model" "${haiku_model:-${model}}")"
+    sonnet_model="$(prompt_value "Sonnet model" "${sonnet_model:-${model}}")"
+    opus_model="$(prompt_value "Opus model" "${opus_model:-${model}}")"
+  fi
+
+  if [[ "${wizard}" == "1" || -n "${host}" || -n "${auth_token}" || -n "${model}" || -n "${haiku_model}" || -n "${sonnet_model}" || -n "${opus_model}" ]]; then
+    seed_statusline_script "${path}"
+    write_settings_json "${path}" "${auth_token}" "${host}" "${model}" "${haiku_model}" "${sonnet_model}" "${opus_model}"
+  fi
+
   note "${name}"
 }
 
