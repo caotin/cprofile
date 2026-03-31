@@ -45,7 +45,8 @@ cprofile current
 cprofile add <name>
 cprofile add <name> --wizard
 cprofile add <name> -w
-cprofile add <name> --host <url> --model <model>
+cprofile update <name> --wizard
+cprofile update <name> -w
 cprofile clone <name>
 cprofile use [--force] <name>
 cprofile login [--force] <name> [-- <claude auth login args...>]
@@ -99,15 +100,16 @@ Model sonnet: gpt-5.4-mini
 Model haiku: gpt-5.4-mini
 ```
 
-Create a new profile without prompts:
+Update an existing profile with the same wizard flow:
 
 ```bash
-cprofile add local \
-  --host http://127.0.0.1:1234 \
-  --model gpt-5.4-mini \
-  --haiku-model gpt-5.4-mini \
-  --sonnet-model gpt-5.4-mini \
-  --opus-model gpt-5.4
+cprofile update local --wizard
+```
+
+Short form:
+
+```bash
+cprofile update local -w
 ```
 
 Clone the current active Claude settings into a new profile:
@@ -122,6 +124,8 @@ That copies:
 - `~/.claude/statusline-command.sh` if it exists
 
 Then it prints the new settings path so you can edit it directly.
+
+`update` also prints the profile settings path after rewriting it.
 
 Switch Claude to that profile:
 
@@ -166,6 +170,12 @@ You can also generate the settings file directly during profile creation:
 
 ```bash
 cprofile add myprofile --wizard
+```
+
+To edit an existing profile with prompts instead of opening the file manually:
+
+```bash
+cprofile update myprofile -w
 ```
 
 ## Manual `settings.json` Editing

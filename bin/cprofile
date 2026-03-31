@@ -14,7 +14,8 @@ usage() {
 Usage:
   ${SELF_NAME} list
   ${SELF_NAME} current
-  ${SELF_NAME} add <name> [--wizard|-w] [--host <url>] [--model <model>] [--haiku-model <model>] [--sonnet-model <model>] [--opus-model <model>]
+  ${SELF_NAME} add <name> [--wizard|-w]
+  ${SELF_NAME} update <name> [--wizard|-w]
   ${SELF_NAME} clone <name>
   ${SELF_NAME} use [--force] <name>
   ${SELF_NAME} login [--force] <name> [-- <claude auth login args...>]
@@ -23,6 +24,7 @@ Commands:
   list       List saved Claude profiles.
   current    Print the active Claude profile name.
   add        Create a profile directory, optionally prompting for Claude settings.
+  update     Update an existing profile, optionally prompting for Claude settings.
   clone      Copy the current ~/.claude settings into a new profile.
   use        Switch plain 'claude' to the selected profile.
   login      Switch to a profile and run 'claude auth login'.
@@ -59,14 +61,6 @@ profile_path() {
   printf '%s/%s' "${PROFILE_ROOT}" "$1"
 }
 
-json_escape() {
-  local value="${1-}"
-  value="${value//\\/\\\\}"
-  value="${value//\"/\\\"}"
-  value="${value//$'\n'/\\n}"
-  printf '%s' "${value}"
-}
-
 prompt_value() {
   local prompt="$1"
   local default="${2-}"
@@ -97,45 +91,79 @@ current_settings_path() {
   printf '%s/settings.json' "${ACTIVE_LINK}"
 }
 
-write_settings_json() {
+json_get_env_value() {
   local path="$1"
-  local auth_token="$2"
-  local host="$3"
-  local model="$4"
-  local haiku_model="$5"
-  local sonnet_model="$6"
-  local opus_model="$7"
-  local file="${path}/settings.json"
-  local -a env_lines=()
-  local i last_index
+  local key="$2"
+  [[ -f "${path}" ]] || return 0
+  python3 - "$path" "$key" <<'PY'
+import json
+import sys
 
-  [[ -n "${auth_token}" ]] && env_lines+=("\"ANTHROPIC_AUTH_TOKEN\": \"$(json_escape "${auth_token}")\"")
-  [[ -n "${host}" ]] && env_lines+=("\"ANTHROPIC_BASE_URL\": \"$(json_escape "${host}")\"")
-  [[ -n "${haiku_model}" ]] && env_lines+=("\"ANTHROPIC_DEFAULT_HAIKU_MODEL\": \"$(json_escape "${haiku_model}")\"")
-  [[ -n "${opus_model}" ]] && env_lines+=("\"ANTHROPIC_DEFAULT_OPUS_MODEL\": \"$(json_escape "${opus_model}")\"")
-  [[ -n "${sonnet_model}" ]] && env_lines+=("\"ANTHROPIC_DEFAULT_SONNET_MODEL\": \"$(json_escape "${sonnet_model}")\"")
-  [[ -n "${model}" ]] && env_lines+=("\"ANTHROPIC_MODEL\": \"$(json_escape "${model}")\"")
+path, key = sys.argv[1], sys.argv[2]
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except Exception:
+    sys.exit(0)
 
-  {
-    printf '{\n'
-    printf '  "env": {\n'
-    if [[ ${#env_lines[@]} -gt 0 ]]; then
-      last_index=$((${#env_lines[@]} - 1))
-      for i in "${!env_lines[@]}"; do
-        if [[ "${i}" -lt "${last_index}" ]]; then
-          printf '    %s,\n' "${env_lines[$i]}"
-        else
-          printf '    %s\n' "${env_lines[$i]}"
-        fi
-      done
-    fi
-    printf '  },\n'
-    printf '  "statusLine": {\n'
-    printf '    "type": "command",\n'
-    printf '    "command": "bash ~/.claude/statusline-command.sh"\n'
-    printf '  }\n'
-    printf '}\n'
-  } > "${file}"
+value = data.get("env", {}).get(key, "")
+if value is None:
+    value = ""
+print(value, end="")
+PY
+}
+
+write_settings_json() {
+  local settings_file="$1"
+  local host="$2"
+  local model="$3"
+  local haiku_model="$4"
+  local sonnet_model="$5"
+  local opus_model="$6"
+  python3 - "$settings_file" "$host" "$model" "$haiku_model" "$sonnet_model" "$opus_model" <<'PY'
+import json
+import os
+import sys
+
+path, host, model, haiku, sonnet, opus = sys.argv[1:7]
+
+data = {}
+if os.path.exists(path):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            loaded = json.load(fh)
+            if isinstance(loaded, dict):
+                data = loaded
+    except Exception:
+        data = {}
+
+env = data.get("env")
+if not isinstance(env, dict):
+    env = {}
+    data["env"] = env
+
+if host:
+    env["ANTHROPIC_BASE_URL"] = host
+if haiku:
+    env["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = haiku
+if opus:
+    env["ANTHROPIC_DEFAULT_OPUS_MODEL"] = opus
+if sonnet:
+    env["ANTHROPIC_DEFAULT_SONNET_MODEL"] = sonnet
+if model:
+    env["ANTHROPIC_MODEL"] = model
+
+status_line = data.get("statusLine")
+if not isinstance(status_line, dict):
+    data["statusLine"] = {
+        "type": "command",
+        "command": "bash ~/.claude/statusline-command.sh",
+    }
+
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=2)
+    fh.write("\n")
+PY
 }
 
 write_active() {
@@ -305,11 +333,6 @@ cmd_current() {
 cmd_add() {
   local name=""
   local wizard=0
-  local host=""
-  local model=""
-  local haiku_model=""
-  local sonnet_model=""
-  local opus_model=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -317,43 +340,18 @@ cmd_add() {
         wizard=1
         shift
         ;;
-      --host)
-        [[ $# -ge 2 ]] || die "usage: ${SELF_NAME} add <name> --host <url>"
-        host="$2"
-        shift 2
-        ;;
-      --model)
-        [[ $# -ge 2 ]] || die "usage: ${SELF_NAME} add <name> --model <model>"
-        model="$2"
-        shift 2
-        ;;
-      --haiku-model)
-        [[ $# -ge 2 ]] || die "usage: ${SELF_NAME} add <name> --haiku-model <model>"
-        haiku_model="$2"
-        shift 2
-        ;;
-      --sonnet-model)
-        [[ $# -ge 2 ]] || die "usage: ${SELF_NAME} add <name> --sonnet-model <model>"
-        sonnet_model="$2"
-        shift 2
-        ;;
-      --opus-model)
-        [[ $# -ge 2 ]] || die "usage: ${SELF_NAME} add <name> --opus-model <model>"
-        opus_model="$2"
-        shift 2
-        ;;
       *)
         if [[ -z "${name}" ]]; then
           name="$1"
           shift
         else
-          die "usage: ${SELF_NAME} add <name> [--wizard|-w] [--host <url>] [--model <model>] [--haiku-model <model>] [--sonnet-model <model>] [--opus-model <model>]"
+          die "usage: ${SELF_NAME} add <name> [--wizard|-w]"
         fi
         ;;
     esac
   done
 
-  [[ -n "${name}" ]] || die "usage: ${SELF_NAME} add <name> [--wizard|-w] [--host <url>] [--model <model>] [--haiku-model <model>] [--sonnet-model <model>] [--opus-model <model>]"
+  [[ -n "${name}" ]] || die "usage: ${SELF_NAME} add <name> [--wizard|-w]"
   bootstrap_if_needed
   validate_name "${name}"
 
@@ -361,22 +359,74 @@ cmd_add() {
   path="$(profile_path "${name}")"
   [[ ! -e "${path}" ]] || die "profile '${name}' already exists"
   mkdir -p "${path}"
+  seed_statusline_script "${path}"
 
   if [[ "${wizard}" == "1" ]]; then
-    host="$(prompt_value "Host name" "${host}")"
-    opus_model="$(prompt_value "Model opus" "${opus_model}")"
-    sonnet_model="$(prompt_value "Model sonnet" "${sonnet_model}")"
-    haiku_model="$(prompt_value "Model haiku" "${haiku_model}")"
-    [[ -n "${model}" ]] || model="${sonnet_model}"
-  fi
-
-  if [[ "${wizard}" == "1" || -n "${host}" || -n "${model}" || -n "${haiku_model}" || -n "${sonnet_model}" || -n "${opus_model}" ]]; then
-    seed_statusline_script "${path}"
-    write_settings_json "${path}" "" "${host}" "${model}" "${haiku_model}" "${sonnet_model}" "${opus_model}"
+    local host model haiku_model sonnet_model opus_model
+    host="$(prompt_value "Host name")"
+    opus_model="$(prompt_value "Model opus")"
+    sonnet_model="$(prompt_value "Model sonnet")"
+    haiku_model="$(prompt_value "Model haiku")"
+    model="${sonnet_model}"
+    write_settings_json "${path}/settings.json" "${host}" "${model}" "${haiku_model}" "${sonnet_model}" "${opus_model}"
     display_path "${path}/settings.json"
   fi
 
   note "${name}"
+}
+
+cmd_update() {
+  local name=""
+  local wizard=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --wizard|--interactive|-w)
+        wizard=1
+        shift
+        ;;
+      *)
+        if [[ -z "${name}" ]]; then
+          name="$1"
+          shift
+        else
+          die "usage: ${SELF_NAME} update <name> [--wizard|-w]"
+        fi
+        ;;
+    esac
+  done
+
+  [[ -n "${name}" ]] || die "usage: ${SELF_NAME} update <name> [--wizard|-w]"
+  bootstrap_if_needed
+  validate_name "${name}"
+  ensure_profile_exists "${name}"
+
+  local path settings_file
+  path="$(profile_path "${name}")"
+  settings_file="${path}/settings.json"
+  [[ -f "${settings_file}" ]] || : > "${settings_file}"
+  seed_statusline_script "${path}"
+
+  if [[ "${wizard}" == "1" ]]; then
+    local host model haiku_model sonnet_model opus_model
+    host="$(json_get_env_value "${settings_file}" "ANTHROPIC_BASE_URL")"
+    sonnet_model="$(json_get_env_value "${settings_file}" "ANTHROPIC_DEFAULT_SONNET_MODEL")"
+    haiku_model="$(json_get_env_value "${settings_file}" "ANTHROPIC_DEFAULT_HAIKU_MODEL")"
+    opus_model="$(json_get_env_value "${settings_file}" "ANTHROPIC_DEFAULT_OPUS_MODEL")"
+    model="$(json_get_env_value "${settings_file}" "ANTHROPIC_MODEL")"
+    [[ -n "${sonnet_model}" ]] || sonnet_model="${model}"
+
+    host="$(prompt_value "Host name" "${host}")"
+    opus_model="$(prompt_value "Model opus" "${opus_model}")"
+    sonnet_model="$(prompt_value "Model sonnet" "${sonnet_model}")"
+    haiku_model="$(prompt_value "Model haiku" "${haiku_model}")"
+    model="${sonnet_model}"
+
+    write_settings_json "${settings_file}" "${host}" "${model}" "${haiku_model}" "${sonnet_model}" "${opus_model}"
+  fi
+
+  note "${name}"
+  display_path "${settings_file}"
 }
 
 cmd_clone() {
@@ -491,6 +541,10 @@ main() {
     add)
       shift
       cmd_add "$@"
+      ;;
+    update)
+      shift
+      cmd_update "$@"
       ;;
     clone)
       shift
