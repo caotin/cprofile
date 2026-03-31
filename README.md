@@ -4,6 +4,8 @@
 
 It works by switching `~/.claude` to point at one saved profile under `~/.claude-profiles/<name>`. Plain `claude` then uses the currently active profile.
 
+Repo: [caotin/cprofile](https://github.com/caotin/cprofile)
+
 ## Paths
 
 `cprofile` uses these global locations:
@@ -13,27 +15,27 @@ It works by switching `~/.claude` to point at one saved profile under `~/.claude
 - Active profile pointer: `~/.claude`
 - Active profile state file: `~/.config/claude-profile-switch/active`
 
-The script source in this repo is [bin/cprofile](/Users/tinhuynh/Desktop/tito/mk-research/bin/cprofile).
+The script source in this repo is [bin/cprofile](https://github.com/caotin/cprofile/blob/main/bin/cprofile).
 
 ## Install
 
-Local install from this repo:
+Local install from a checked out copy:
 
 ```bash
 bash install.sh
 ```
 
-Public install with `curl` after you publish [install.sh](/Users/tinhuynh/Desktop/tito/mk-research/install.sh) at a raw public URL:
+Public install with `curl`:
 
 ```bash
-curl -fsSL https://<your-public-raw-url>/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/caotin/cprofile/main/install.sh | bash
 ```
 
-Example shape if you later host it on GitHub raw content:
+Public files:
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/<owner>/<repo>/<branch>/install.sh | bash
-```
+- Repo: [caotin/cprofile](https://github.com/caotin/cprofile)
+- Installer: [install.sh](https://raw.githubusercontent.com/caotin/cprofile/main/install.sh)
+- Script: [bin/cprofile](https://raw.githubusercontent.com/caotin/cprofile/main/bin/cprofile)
 
 ## Commands
 
