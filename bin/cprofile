@@ -14,7 +14,8 @@ usage() {
 Usage:
   ${SELF_NAME} list
   ${SELF_NAME} current
-  ${SELF_NAME} add <name> [--wizard|--option [label]] [--host <url>] [--auth-token <token>] [--model <model>] [--haiku-model <model>] [--sonnet-model <model>] [--opus-model <model>]
+  ${SELF_NAME} add <name> [--wizard|-w] [--host <url>] [--model <model>] [--haiku-model <model>] [--sonnet-model <model>] [--opus-model <model>]
+  ${SELF_NAME} clone <name>
   ${SELF_NAME} use [--force] <name>
   ${SELF_NAME} login [--force] <name> [-- <claude auth login args...>]
 
@@ -22,6 +23,7 @@ Commands:
   list       List saved Claude profiles.
   current    Print the active Claude profile name.
   add        Create a profile directory, optionally prompting for Claude settings.
+  clone      Copy the current ~/.claude settings into a new profile.
   use        Switch plain 'claude' to the selected profile.
   login      Switch to a profile and run 'claude auth login'.
 
@@ -37,6 +39,11 @@ die() {
 
 note() {
   printf '%s\n' "$*"
+}
+
+display_path() {
+  local path="$1"
+  printf '%s\n' "${path/#$HOME/~}"
 }
 
 ensure_dirs() {
@@ -84,6 +91,10 @@ seed_statusline_script() {
   if [[ -f "${source_file}" && ! -e "${target_file}" ]]; then
     cp "${source_file}" "${target_file}"
   fi
+}
+
+current_settings_path() {
+  printf '%s/settings.json' "${ACTIVE_LINK}"
 }
 
 write_settings_json() {
@@ -294,9 +305,7 @@ cmd_current() {
 cmd_add() {
   local name=""
   local wizard=0
-  local option_label=""
   local host=""
-  local auth_token=""
   local model=""
   local haiku_model=""
   local sonnet_model=""
@@ -304,26 +313,13 @@ cmd_add() {
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --wizard|--interactive)
+      --wizard|--interactive|-w)
         wizard=1
         shift
-        ;;
-      --option)
-        wizard=1
-        shift
-        if [[ $# -gt 0 && "$1" != --* ]]; then
-          option_label="$1"
-          shift
-        fi
         ;;
       --host)
         [[ $# -ge 2 ]] || die "usage: ${SELF_NAME} add <name> --host <url>"
         host="$2"
-        shift 2
-        ;;
-      --auth-token)
-        [[ $# -ge 2 ]] || die "usage: ${SELF_NAME} add <name> --auth-token <token>"
-        auth_token="$2"
         shift 2
         ;;
       --model)
@@ -351,13 +347,13 @@ cmd_add() {
           name="$1"
           shift
         else
-          die "usage: ${SELF_NAME} add <name> [--wizard|--option [label]] [--host <url>] [--auth-token <token>] [--model <model>] [--haiku-model <model>] [--sonnet-model <model>] [--opus-model <model>]"
+          die "usage: ${SELF_NAME} add <name> [--wizard|-w] [--host <url>] [--model <model>] [--haiku-model <model>] [--sonnet-model <model>] [--opus-model <model>]"
         fi
         ;;
     esac
   done
 
-  [[ -n "${name}" ]] || die "usage: ${SELF_NAME} add <name> [--wizard|--option [label]] [--host <url>] [--auth-token <token>] [--model <model>] [--haiku-model <model>] [--sonnet-model <model>] [--opus-model <model>]"
+  [[ -n "${name}" ]] || die "usage: ${SELF_NAME} add <name> [--wizard|-w] [--host <url>] [--model <model>] [--haiku-model <model>] [--sonnet-model <model>] [--opus-model <model>]"
   bootstrap_if_needed
   validate_name "${name}"
 
@@ -367,21 +363,46 @@ cmd_add() {
   mkdir -p "${path}"
 
   if [[ "${wizard}" == "1" ]]; then
-    [[ -n "${option_label}" ]] && note "config option: ${option_label}"
-    host="$(prompt_value "Host / base URL" "${host}")"
-    auth_token="$(prompt_value "Auth token (optional)" "${auth_token}")"
-    model="$(prompt_value "Default model" "${model}")"
-    haiku_model="$(prompt_value "Haiku model" "${haiku_model:-${model}}")"
-    sonnet_model="$(prompt_value "Sonnet model" "${sonnet_model:-${model}}")"
-    opus_model="$(prompt_value "Opus model" "${opus_model:-${model}}")"
+    host="$(prompt_value "Host name" "${host}")"
+    opus_model="$(prompt_value "Model opus" "${opus_model}")"
+    sonnet_model="$(prompt_value "Model sonnet" "${sonnet_model}")"
+    haiku_model="$(prompt_value "Model haiku" "${haiku_model}")"
+    [[ -n "${model}" ]] || model="${sonnet_model}"
   fi
 
-  if [[ "${wizard}" == "1" || -n "${host}" || -n "${auth_token}" || -n "${model}" || -n "${haiku_model}" || -n "${sonnet_model}" || -n "${opus_model}" ]]; then
+  if [[ "${wizard}" == "1" || -n "${host}" || -n "${model}" || -n "${haiku_model}" || -n "${sonnet_model}" || -n "${opus_model}" ]]; then
     seed_statusline_script "${path}"
-    write_settings_json "${path}" "${auth_token}" "${host}" "${model}" "${haiku_model}" "${sonnet_model}" "${opus_model}"
+    write_settings_json "${path}" "" "${host}" "${model}" "${haiku_model}" "${sonnet_model}" "${opus_model}"
+    display_path "${path}/settings.json"
   fi
 
   note "${name}"
+}
+
+cmd_clone() {
+  local name="${1:-}"
+  [[ $# -eq 1 && -n "${name}" ]] || die "usage: ${SELF_NAME} clone <name>"
+  bootstrap_if_needed
+  validate_name "${name}"
+
+  local path settings_source settings_target status_source status_target
+  path="$(profile_path "${name}")"
+  [[ ! -e "${path}" ]] || die "profile '${name}' already exists"
+  mkdir -p "${path}"
+
+  settings_source="$(current_settings_path)"
+  settings_target="${path}/settings.json"
+  [[ -f "${settings_source}" ]] || die "current Claude settings file not found at ${settings_source}"
+  cp "${settings_source}" "${settings_target}"
+
+  status_source="${ACTIVE_LINK}/statusline-command.sh"
+  status_target="${path}/statusline-command.sh"
+  if [[ -f "${status_source}" ]]; then
+    cp "${status_source}" "${status_target}"
+  fi
+
+  note "${name}"
+  display_path "${settings_target}"
 }
 
 cmd_use() {
@@ -470,6 +491,10 @@ main() {
     add)
       shift
       cmd_add "$@"
+      ;;
+    clone)
+      shift
+      cmd_clone "$@"
       ;;
     use)
       shift
